@@ -156,6 +156,25 @@ class Extractor extends MonthExtractor {
     });
 
     // Me quedo solo con los rows de 15 columnas
+    // Algunos PDFs parten el nombre de la marca (ej: "Aston Mart" + " n")
+    const isValue = (text: IText) =>
+      /^([\d.]+|-)$/.test(decodeURIComponent(text.data.R[0].T).trim());
+    rows = rows.map((row) => {
+      const firstValue = row.findIndex(isValue);
+      if (firstValue <= 1) {
+        return row;
+      }
+      const brand = row
+        .slice(0, firstValue)
+        .map((text) => text.data.R[0].T)
+        .join('');
+      const brandText: IText = {
+        ...row[0],
+        data: { ...row[0].data, R: [{ ...row[0].data.R[0], T: brand }] },
+      };
+      return [brandText, ...row.slice(firstValue)];
+    });
+
     rows = rows.filter((row) => row.length === 15);
 
     // Schema zod
@@ -167,6 +186,7 @@ class Extractor extends MonthExtractor {
           return decodeURIComponent(val.replace(/%00/g, 'i'))
             .trim()
             .replace('C itroen', 'Citroen')
+            .replace('Aston Mart n', 'Aston Martin')
             .toUpperCase()
             .replace(/\s+/g, '_')
             .replace(/-/g, '_');
