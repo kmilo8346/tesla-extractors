@@ -115,28 +115,25 @@ class Extractor extends MonthExtractor {
       pdfParser.loadPDF(fileData.path);
     });
 
-    const texts: Text[] = pdfJSON.Pages.reduce((acc, page) => {
-      return acc.concat(page.Texts);
-    }, []);
-
     // Armo la tabla usando las coordenadas
     // Para crear un row necesito dejar en un arreglo
-    // los que tenga la y igual o muy cercana
+    // los que tenga la y igual o muy cercana.
+    // Se agrupa por página para no mezclar rows de páginas distintas
     const TOLERANCE = 0.036;
     let rows: Text[][] = [];
-    for (let i = 0; i < texts.length; i++) {
-      const text = texts[i];
-
-      // Busco a que row pertenece
-      // Si no hay ninguno, se crea un nuevo row
-      const match = rows.find((row) => {
-        return Math.abs(row[0].y - text.y) < TOLERANCE;
-      });
-      if (match) {
-        match.push(text);
-      } else {
-        rows.push([text]);
+    for (const page of pdfJSON.Pages) {
+      const pageRows: Text[][] = [];
+      for (const text of page.Texts) {
+        const match = pageRows.find((row) => {
+          return Math.abs(row[0].y - text.y) < TOLERANCE;
+        });
+        if (match) {
+          match.push(text);
+        } else {
+          pageRows.push([text]);
+        }
       }
+      rows = rows.concat(pageRows);
     }
 
     // Solo me quedo con los rows donde
