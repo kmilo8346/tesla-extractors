@@ -9,7 +9,7 @@ import {
   MonthExtractor,
 } from '../../../../lib';
 
-const SOURCE_URL = 'https://pfa-auto.fr/marche-automobile';
+const POSTS_URL = 'https://pfa-auto.fr/wp-json/wp/v2/posts';
 
 class Extractor extends MonthExtractor {
   constructor() {
@@ -23,81 +23,55 @@ class Extractor extends MonthExtractor {
   async download(dateId: MonthDateId): Promise<Buffer | null> {
     const { month, year } = dateId;
 
-    // Descargo la página princial
-    let response = await axios.get(SOURCE_URL);
-    let $ = cheerio.load(response.data);
-
-    let aElements = Array.from($('.t-entry-title a'));
-    // Siempre debería haber al menos un artículo
-    // si no lo hay, es un error, seguro cambiaron la estructura del html
-    if (aElements.length === 0) {
-      console.debug({
-        SOURCE_URL,
-      });
-      throw new Error('Articles not found');
-    }
-
     const MONTH_MAP = {
-      1: 'JANVIER',
-      2: 'FEVRIER',
-      3: 'MARS',
-      4: 'AVRIL',
-      5: 'MAI',
-      6: 'JUIN',
-      7: 'JUILLET',
-      8: 'AOUT',
-      9: 'SEPTEMBRE',
-      10: 'OCTOBRE',
-      11: 'NOVEMBRE',
-      12: 'DECEMBRE',
+      1: 'janvier',
+      2: 'fevrier',
+      3: 'mars',
+      4: 'avril',
+      5: 'mai',
+      6: 'juin',
+      7: 'juillet',
+      8: 'aout',
+      9: 'septembre',
+      10: 'octobre',
+      11: 'novembre',
+      12: 'decembre',
     };
-    let articleUrl: string = null;
-    for (const aElement of aElements) {
-      const text = $(aElement)
-        .text()
-        .trim()
-        .toUpperCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
 
-      if (text.endsWith(`${MONTH_MAP[month]} ${year}`)) {
-        articleUrl = $(aElement).attr('href');
-        break;
-      }
-    }
+    // Busco el artículo del mes por su slug, la lista de la página
+    // principal no siempre muestra todos los artículos
+    const response = await axios.get(POSTS_URL, {
+      params: {
+        slug: `marche-automobile-francais-${MONTH_MAP[month]}-${year}`,
+        _fields: 'content',
+      },
+    });
 
     // Informo que no hay datos publicados aún
-    if (!articleUrl) {
+    if (response.data.length === 0) {
       return null;
     }
 
-    // Descargo la página del artículo
-    response = await axios.get(articleUrl);
-    $ = cheerio.load(response.data);
-
-    aElements = Array.from($('.post-content a'));
-
-    // Me quedo con los links que tengan el texto
-    // "Télécharger le document"
-    aElements = aElements.filter((aElement) => {
-      return (
-        $(aElement).text().trim().toUpperCase() === 'TÉLÉCHARGER LE DOCUMENT'
-      );
-    });
-
-    // Deben haber dos links un documento con datos esenciales
-    // y otro con datos más detallados
-    if (aElements.length !== 2) {
+    // Descargo el documento con datos detallados ("Dossier de presse")
+    // lo identifico por el nombre del archivo y no por el texto del link
+    const $ = cheerio.load(response.data[0].content.rendered);
+    const downloadUrls = [
+      ...new Set(
+        Array.from($('a'))
+          .map((aElement) => $(aElement).attr('href'))
+          .filter((href) => href && /dossier-de-presse[^/]*\.pdf$/i.test(href))
+      ),
+    ];
+    if (downloadUrls.length !== 1) {
       console.debug({
-        articleUrl,
+        year,
+        month,
+        downloadUrls,
       });
-      throw new Error('Expected links not found');
+      throw new Error('Expected document not found');
     }
 
-    // Descargo el documento con datos detallados
-    const downloadUrl = $(aElements[1]).attr('href');
-
-    const fileContent = await axios(downloadUrl, {
+    const fileContent = await axios(downloadUrls[0], {
       responseType: 'arraybuffer',
     });
 
