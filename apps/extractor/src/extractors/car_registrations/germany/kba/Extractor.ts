@@ -86,22 +86,22 @@ class Extractor extends MonthExtractor {
 
     // Elimino los 4 primeros elementos
     data.splice(0, 5);
-    // Elimino los ultimos tres elementos
-    data.splice(-3);
+    // Elimino desde el total del mes en adelante
+    // (total, notas "Hinweis" y pie de página)
+    const totalIndex = data.findIndex((item) =>
+      Object.values(item).some((value) =>
+        String(value).trim().startsWith('NEUZULASSUNGEN INSGESAMT')
+      )
+    );
+    if (totalIndex === -1) {
+      throw new Error(`NEUZULASSUNGEN INSGESAMT not found in ${year}_${month}`);
+    }
+    data.splice(totalIndex);
 
     // Para este caso debo eliminar una fila mas inicialmente
     const firsLinexceptions = [{ year: 2023, month: 10 }];
     if (firsLinexceptions.some((e) => e.year === year && e.month === month)) {
       data.splice(0, 1);
-    }
-
-    // Para este caso debo eliminar una fila mas al final
-    const endLinesExceptions = [{ year: 2023, month: 5, lines: 2 }];
-    if (endLinesExceptions.some((e) => e.year === year && e.month === month)) {
-      data.splice(
-        -endLinesExceptions.find((e) => e.year === year && e.month === month)
-          .lines
-      );
     }
 
     const registrations = [];
@@ -140,6 +140,11 @@ class Extractor extends MonthExtractor {
       }
 
       if (model === 'SONSTIGE') {
+        continue;
+      }
+
+      // Total de otras marcas sin detalle
+      if ((brand + '').trim() === 'SONSTIGE') {
         continue;
       }
 
