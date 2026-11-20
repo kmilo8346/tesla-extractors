@@ -18,7 +18,7 @@ Cómo reparar: `.agents/skills/reparar-extractor/SKILL.md`.
 | Finlandia     | aut                                                                | Pendiente | 2025-04                  |                                                               |
 | Francia       | pfa, pfa_brand                                                     | Listo     | 2026-10                  | extractors #4, data #10                                       |
 | Grecia        | seaa                                                               | Listo     | 2026-10                  | data #4                                                       |
-| Holanda       | bovag                                                              | Pendiente | 2025-04                  | diagnóstico inicial: la página ya no lista los meses antiguos |
+| Holanda       | bovag                                                              | Listo     | 2026-10                  | extractors #7, data #12                                       |
 | Hong Kong     | hkevdb                                                             | Listo     | 2026-10                  | data #5                                                       |
 | Irlanda       | beepbeep                                                           | Pendiente | 2025-04                  |                                                               |
 | Islandia      | samgongustofa                                                      | Pendiente | 2025-03                  |                                                               |
