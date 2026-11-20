@@ -12,6 +12,9 @@ import {
 const SOURCE_URL =
   'https://anfac.com/category/actualidad/notas-de-matriculacion/';
 
+const USER_AGENT =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
+
 class Extractor extends MonthExtractor {
   constructor() {
     super({
@@ -21,12 +24,47 @@ class Extractor extends MonthExtractor {
     });
   }
 
+  // El sitio a veces no responde o corta la descarga,
+  // por eso uso un user agent de navegador y reintento
+  async get(
+    url: string,
+    responseType: 'text' | 'arraybuffer' = 'text'
+  ): Promise<any> {
+    const MAX_ATTEMPTS = 10;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const response = await axios.get(url, {
+          responseType,
+          timeout: 30000,
+          headers: { 'User-Agent': USER_AGENT },
+        });
+
+        // Valido que el archivo haya llegado completo
+        const contentLength = response.headers['content-length'];
+        if (
+          responseType === 'arraybuffer' &&
+          contentLength !== undefined &&
+          parseInt(contentLength, 10) !== response.data.byteLength
+        ) {
+          throw new Error(`Incomplete download: "${url}"`);
+        }
+
+        return response.data;
+      } catch (error) {
+        // La página no existe, no tiene sentido reintentar
+        if (error.response?.status === 404) {
+          return null;
+        }
+        if (attempt >= MAX_ATTEMPTS) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+  }
+
   async download(dateId: MonthDateId): Promise<Buffer | null> {
     const { year, month } = dateId;
-
-    // Cargo el html de la página que lista los artículos
-    let response = await axios.get(SOURCE_URL);
-    let $ = cheerio.load(response.data);
 
     const MONTH_MAP = {
       1: 'ENERO',
@@ -50,20 +88,60 @@ class Extractor extends MonthExtractor {
     const publishedMonth = publishedDate.getMonth() + 1;
     const publishedYear = publishedDate.getFullYear();
     const expectedText = `DE ${MONTH_MAP[publishedMonth]} DE ${publishedYear}`;
+    const expectedValue = publishedYear * 12 + publishedMonth;
 
-    // Encuentro la url del primer artículo
-    // publicado en la fecha esperada
+    // Recorro las páginas del listado de artículos
+    // (de la más nueva a la más antigua) hasta encontrar
+    // un artículo publicado antes de la fecha esperada
+    const MAX_PAGES = 100;
     let detailPageUrl: string = null;
-    Array.from($('.no-botones .card-info')).forEach((element) => {
-      const cardInfo = $(element);
-      const dateText = cardInfo.find('.card-date').text().trim();
-
-      if (dateText.toUpperCase().endsWith(expectedText)) {
-        // Me quedo con la última url encontrada
-        // que sería la primera que se publica en el mes
-        detailPageUrl = cardInfo.find('.card-description a').attr('href');
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const html = await this.get(
+        page === 1 ? SOURCE_URL : `${SOURCE_URL}page/${page}/`
+      );
+      if (html === null) {
+        break;
       }
-    });
+      const $ = cheerio.load(html);
+      const cards = Array.from($('.no-botones .card-info'));
+      if (cards.length === 0) {
+        break;
+      }
+
+      let foundOlder = false;
+      for (const element of cards) {
+        const cardInfo = $(element);
+        const dateText = cardInfo
+          .find('.card-date')
+          .text()
+          .trim()
+          .toUpperCase();
+
+        if (dateText.endsWith(expectedText)) {
+          // Me quedo con la última url encontrada
+          // que sería la primera que se publica en el mes
+          detailPageUrl = cardInfo.find('.card-description a').attr('href');
+        }
+
+        // Fecha con formato "2 DE NOVIEMBRE DE 2026"
+        const [, cardMonthText, cardYearText] =
+          dateText.match(/DE (\S+) DE (\d{4})$/) ?? [];
+        const cardMonth = Object.keys(MONTH_MAP).find(
+          (key) => MONTH_MAP[key] === cardMonthText
+        );
+        if (
+          cardMonth &&
+          parseInt(cardYearText, 10) * 12 + parseInt(cardMonth, 10) <
+            expectedValue
+        ) {
+          foundOlder = true;
+        }
+      }
+
+      if (foundOlder) {
+        break;
+      }
+    }
 
     // Si no se ha encontrado la url del artículo
     // informo que no hay datos publicados aún
@@ -72,28 +150,27 @@ class Extractor extends MonthExtractor {
     }
 
     // Cargo el html de la página del artículo
-    response = await axios.get(detailPageUrl);
-    $ = cheerio.load(response.data);
-
+    const $ = cheerio.load(await this.get(detailPageUrl));
     const downloadUrl = $('section .btn a').attr('href');
 
-    // Valido que el nombre de la url sea el esperado
-    let url = downloadUrl.toLowerCase();
-    let endExpected = `np-matriculaciones-${MONTH_MAP[
-      month
-    ].toLowerCase()}-${year}-completa.pdf`;
-    if (url.endsWith(endExpected) === false) {
+    // Valido que el nombre del archivo tenga el mes,
+    // el año y diga que es la nota completa
+    const fileName = (downloadUrl ?? '').toLowerCase().split('/').pop();
+    if (
+      !fileName.endsWith('.pdf') ||
+      !fileName.includes(MONTH_MAP[month].toLowerCase()) ||
+      !fileName.includes(`${year}`) ||
+      !fileName.includes('completa')
+    ) {
       throw new Error(
-        `Invalid download url: "${url}". Must be end with: "${endExpected}"`
+        `Invalid download url: "${downloadUrl}". Must contain "${MONTH_MAP[
+          month
+        ].toLowerCase()}", "${year}" and "completa"`
       );
     }
 
     // Descargo el archivo
-    response = await axios.get(downloadUrl, {
-      responseType: 'arraybuffer',
-    });
-
-    return Buffer.from(response.data);
+    return Buffer.from(await this.get(downloadUrl, 'arraybuffer'));
   }
 
   async transform(
