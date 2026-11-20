@@ -1,6 +1,5 @@
 import z from 'zod';
 import axios from 'axios';
-import puppeteer, { Browser, Page } from 'puppeteer';
 import PDFParser, { Output, Text } from 'pdf2json';
 import {
   FileData,
@@ -21,83 +20,47 @@ class Extractor extends MonthExtractor {
   }
 
   async download(dateId: MonthDateId): Promise<Buffer | null> {
-    // Inicia el navegador
-    const browser: Browser = await puppeteer.launch({
-      headless: true, // Cambia a true si no necesitas ver la interacción
-      args: ['--no-sandbox', '--disable-setuid-sandbox'], // Argumentos para evitar problemas de permisos
-    });
+    const { year, month } = dateId;
 
-    // Abre una nueva pestaña
-    const page: Page = await browser.newPage();
+    const monthMap = {
+      1: 'januari',
+      2: 'februari',
+      3: 'maart',
+      4: 'april',
+      5: 'mei',
+      6: 'juni',
+      7: 'juli',
+      8: 'augustus',
+      9: 'september',
+      10: 'oktober',
+      11: 'november',
+      12: 'december',
+    };
+    const expectedTitle = `Autoverkopen ${monthMap[month]} ${year}`;
 
-    // Configura el viewport (opcional)
-    await page.setViewport({ width: 1280, height: 800 });
-
-    // Navega a la página deseada
-    await page.goto(SOURCE_URL, { waitUntil: 'networkidle2' });
-
-    // Espero 5 segundos a que cargue la página
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-
-    // Le doy click al card
-    await page.evaluate(() => {
-      // Encuentra el card span
-      const cardSpan = Array.from(document.querySelectorAll('span')).filter(
-        (e) =>
-          e.textContent ===
-          "Verkoopcijfers personenauto's naar merk/model per maand"
-      )[0];
-
-      // El elemento padre es el card
-      // le doy click al card
-      cardSpan.parentElement.click();
-    });
-
-    // Espero 1 a que se expanda la lista de links
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // Encuentro el link si es que existe
-    // o null en caso de que no se encuentre
-    const link = await page.evaluate(
-      (year: number, month: number) => {
-        const links = Array.from(
-          document.querySelectorAll('a[class*="styles_foldout-block__"]')
-        );
-
-        const monthMap = {
-          1: 'januari',
-          2: 'februari',
-          3: 'maart',
-          4: 'april',
-          5: 'mei',
-          6: 'juni',
-          7: 'juli',
-          8: 'augustus',
-          9: 'september',
-          10: 'oktober',
-          11: 'november',
-          12: 'december',
-        };
-
-        const link = links.find((link) => {
-          const text = link.querySelector('span').textContent;
-          return text === `Autoverkopen ${monthMap[month]} ${year}`;
-        });
-        if (!link) {
-          return null;
-        }
-
-        return link.getAttribute('href');
-      },
-      dateId.year,
-      dateId.month
-    );
-    // Informo que no hay datos para descargar
-    if (!link) {
-      return null;
+    // La lista desplegable de la página ya no muestra los meses antiguos,
+    // pero el html trae los datos de todas las descargas
+    // con su url y su título, por ejemplo:
+    // "url":"https://cdn.sanity.io/...pdf"},"originalFilename":"..."},"title":"Autoverkopen mei 2025"
+    const response = await axios.get(SOURCE_URL);
+    const downloadRegex =
+      /"url":"(https:\/\/[^"]+?\.pdf)"\},"originalFilename":"(?:[^"\\]|\\.)*"\},"title":"([^"]+)"/g;
+    const urls = new Set<string>();
+    for (const match of (response.data as string).matchAll(downloadRegex)) {
+      if (match[2] === expectedTitle) {
+        urls.add(match[1]);
+      }
     }
 
-    const fileContent = await axios(link, {
+    // Informo que no hay datos para descargar
+    if (urls.size === 0) {
+      return null;
+    }
+    if (urls.size > 1) {
+      throw new Error(`More than one file found for "${expectedTitle}"`);
+    }
+
+    const fileContent = await axios([...urls][0], {
       responseType: 'arraybuffer',
     });
 
