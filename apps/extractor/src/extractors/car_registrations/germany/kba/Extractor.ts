@@ -33,7 +33,8 @@ class Extractor extends MonthExtractor {
     const $ = cheerio.load(html.data);
 
     // Solo necesito los primeros links
-    const content = $('.links').first();
+    // La página agrupa los enlaces en un bloque por año
+    const content = $('.links');
     const links: string[] = [];
     content.find('a.c-publication').each((_, element) => {
       const href = $(element).attr('href');
