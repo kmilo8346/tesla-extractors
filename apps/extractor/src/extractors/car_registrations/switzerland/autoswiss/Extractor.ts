@@ -1,5 +1,5 @@
 import axios from 'axios';
-import puppeteer, { Browser, Page } from 'puppeteer';
+import * as cheerio from 'cheerio';
 import xlsx, { CellObject } from 'xlsx';
 import z from 'zod';
 import {
@@ -9,7 +9,7 @@ import {
   MonthExtractor,
 } from '../../../../lib';
 
-const SOURCE_URL = 'https://www.auto.swiss/#tab-2';
+const SOURCE_URL = 'https://www.auto.swiss/';
 
 interface IRow {
   brand: string;
@@ -27,60 +27,38 @@ class Extractor extends MonthExtractor {
   }
 
   async download(dateId: MonthDateId): Promise<Buffer | null> {
-    const { year, month } = dateId;
+    const { year } = dateId;
 
-    // Inicia el navegador
-    const browser: Browser = await puppeteer.launch({
-      headless: true, // Cambia a true si no necesitas ver la interacción
-      args: ['--no-sandbox', '--disable-setuid-sandbox'], // Argumentos para evitar problemas de permisos
-    });
+    // En la pestaña de modelos hay un excel por año:
+    // "Laufendes Jahr (Excel)" para el año en curso
+    // y un link con el número del año para los anteriores
+    const response = await axios.get(SOURCE_URL);
+    const $ = cheerio.load(response.data);
+    const links = Array.from($('#tab-2 a')).map((a) => ({
+      text: $(a).text().trim(),
+      href: $(a).attr('href'),
+    }));
 
-    // Abre una nueva pestaña
-    const page: Page = await browser.newPage();
-
-    // Bloquear la carga de imágenes
-    await page.setRequestInterception(true);
-    page.on('request', (request) => {
-      if (request.resourceType() === 'image') {
-        request.abort(); // Evitar que se carguen las imágenes
-      } else {
-        request.continue();
+    let link = links.find((l) => l.text === `${year}`)?.href;
+    if (!link) {
+      // El excel del año en curso tiene el año en el nombre
+      const current = links.find((l) => l.text.startsWith('Laufendes Jahr'));
+      if (current?.href?.includes(`${year}`)) {
+        link = current.href;
       }
-    });
+    }
 
-    // Navega a la página deseada
-    await page.goto(SOURCE_URL, { waitUntil: 'networkidle2' });
-
-    // Espero a que el tab 2 esté activo
-    await page.waitForFunction(() => {
-      const element = document.getElementById('tab-2');
-      return element && element.classList.contains('is-active');
-    });
-
-    // Obtengo el link de descarga de los datos de este año
-    const link = await page.evaluate(() => {
-      const element = document.querySelector('#tab-2 a');
-      return element!.getAttribute('href');
-    });
-
-    // Cierro el navegador
-    await browser.close();
+    // Informo que no hay datos publicados
+    if (!link) {
+      return null;
+    }
 
     // Descargo el archivo en memoria
-    const fileContent = await axios(link, {
+    const fileContent = await axios(new URL(link, SOURCE_URL).href, {
       responseType: 'arraybuffer',
     });
 
-    // Valido que el año que se pida sea
-    // el año en curso, que es lo que se puede descargar
-    const tmpDate = new Date();
-    tmpDate.setMonth(tmpDate.getMonth() - 1);
-    const publishedYear = tmpDate.getFullYear();
-    if (publishedYear !== year) {
-      throw new Error('Year cannot be downloaded');
-    }
-
-    // Valido que los datos estén publicados
+    // Valido que los datos del mes estén publicados
     const rows = await this.getTableData(dateId, {
       path: '',
       data: fileContent.data,
