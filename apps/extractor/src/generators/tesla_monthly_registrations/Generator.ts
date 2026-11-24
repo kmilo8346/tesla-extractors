@@ -326,16 +326,25 @@ class Generator extends BaseGenerator {
     })();
 
     // --------
-    // Cargo Norway top_20_registrations_by_brand.csv
+    // Cargo Norway top_20_registrations_by_brand.csv (ofv, hasta 2026-08)
+    // y top_30_registrations_by_brand.csv (ofv_api) para los meses siguientes
     await (async () => {
       const country = 'norway';
-      const dataPath = path.join(
-        COUNTRIES_PATH,
-        country,
-        'top_20_registrations_by_brand.csv'
+      let data = await this.loadSource(
+        path.join(COUNTRIES_PATH, country, 'top_20_registrations_by_brand.csv')
       );
-      let data = await this.loadSource(dataPath);
       data = data.filter((r) => r['brand'] === 'TESLA');
+      const lastMonth = Math.max(
+        ...data.map((r) => r['year'] * 100 + r['month'])
+      );
+      let apiData = await this.loadSource(
+        path.join(COUNTRIES_PATH, country, 'top_30_registrations_by_brand.csv')
+      );
+      apiData = apiData.filter(
+        (r) =>
+          r['brand'] === 'TESLA' && r['year'] * 100 + r['month'] > lastMonth
+      );
+      data = [...data, ...apiData];
       registrations.push(
         ...data.map((r) => {
           const result: IBrandRegistrations = {
