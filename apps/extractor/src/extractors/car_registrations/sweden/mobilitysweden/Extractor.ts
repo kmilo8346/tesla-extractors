@@ -93,11 +93,16 @@ class Extractor extends MonthExtractor {
       11: 'november',
       12: 'december',
     };
-    const posibleFileNames = [
-      `Månadsrapport Nyregistreringar ${MONTH_MAP[month]} ${year}.xlsx`,
-      `Nyregistreringar ${MONTH_MAP[month]} ${year}.xlsx`,
-      `Nyregistreringar ${MONTH_MAP[month]}_${year}.xlsx`,
-    ].map((name) => name.normalize().toUpperCase());
+    // Ejemplos: "Nyregistreringar december 2023.xlsx",
+    // "Månadsrapport Nyregistreringar sep 2026.xlsx",
+    // "Månadsrapport Nyregistreringar december 2025 (prel).xlsx"
+    const monthName = MONTH_MAP[month].toUpperCase();
+    const fileNameRegex = new RegExp(
+      `^(MÅNADSRAPPORT )?NYREGISTRERINGAR (${monthName}|${monthName.slice(
+        0,
+        3
+      )})[ _]${year}( \\(PREL\\))?\\.XLSX$`
+    );
     const links = Array.from($('.filelist_type_listing_row_filename a'));
     for (const link of links) {
       const text = $(link)
@@ -107,16 +112,15 @@ class Extractor extends MonthExtractor {
         .join(' ')
         .normalize()
         .toUpperCase();
-      if (posibleFileNames.includes(text)) {
+      if (fileNameRegex.test(text)) {
         downloadLink = `https://mobilitysweden.se${$(link).attr('href')}`;
         break;
       }
     }
 
-    // Si no se encontró el link
-    // lanzo un error pq eso no debería pasar
+    // Si la noticia no tiene el excel del mes, aún no está publicado
     if (!downloadLink) {
-      throw new Error('Download link not found');
+      return null;
     }
 
     const fileContent = await axios(downloadLink, {
