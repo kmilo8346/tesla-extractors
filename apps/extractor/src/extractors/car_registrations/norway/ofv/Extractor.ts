@@ -36,6 +36,8 @@ class Extractor extends MonthExtractor {
       folders: ['car_registrations', 'countries', 'norway'],
       source: 'ofv',
       fileext: 'json',
+      // El dashboard de Power BI dejó de actualizarse en agosto de 2026
+      disabled: true,
     });
   }
 
@@ -44,6 +46,10 @@ class Extractor extends MonthExtractor {
       this.downloadTopRegistrationsByBrand(dateId),
       this.downloadTopRegistrationsByModel(dateId),
     ]);
+
+    if (!by_brand || !by_model) {
+      return null;
+    }
 
     const fileContent = JSON.stringify(
       {
@@ -76,7 +82,7 @@ class Extractor extends MonthExtractor {
 
   private downloadTopRegistrationsByBrand = async (
     dateId: MonthDateId
-  ): Promise<string[][]> => {
+  ): Promise<string[][] | null> => {
     // Inicia el navegador
     const browser: Browser = await puppeteer.launch({
       headless: true, // Cambia a true si no necesitas ver la interacción
@@ -84,7 +90,7 @@ class Extractor extends MonthExtractor {
     });
 
     // Abre una nueva pestaña
-    const page: Page = await browser.newPage();
+    const page: Page = await this.newPage(browser);
 
     // Configura el viewport (opcional)
     await page.setViewport({ width: 1280, height: 800 });
@@ -120,14 +126,13 @@ class Extractor extends MonthExtractor {
     });
     await page.mouse.click(x, y);
 
-    // Selecciono año
-    await this.changeSlicer(page, 0, `${dateId.year}`);
-
-    // Selecciono mes
-    await this.changeSlicer(page, 1, MONTH_MAP[dateId.month]);
+    // Selecciono año y mes
+    const found =
+      (await this.changeSlicer(page, 0, `${dateId.year}`)) &&
+      (await this.changeSlicer(page, 1, MONTH_MAP[dateId.month]));
 
     // Extraigo los valores de la tabla
-    const tableValues = await this.getTableValues(page);
+    const tableValues = found ? await this.getTableValues(page) : null;
 
     // Cierro el navegador
     await browser.close();
@@ -137,7 +142,7 @@ class Extractor extends MonthExtractor {
 
   private downloadTopRegistrationsByModel = async (
     dateId: MonthDateId
-  ): Promise<string[][]> => {
+  ): Promise<string[][] | null> => {
     // Inicia el navegador
     const browser: Browser = await puppeteer.launch({
       headless: true, // Cambia a true si no necesitas ver la interacción
@@ -145,7 +150,7 @@ class Extractor extends MonthExtractor {
     });
 
     // Abre una nueva pestaña
-    const page: Page = await browser.newPage();
+    const page: Page = await this.newPage(browser);
 
     // Configura el viewport (opcional)
     await page.setViewport({ width: 1280, height: 800 });
@@ -184,14 +189,13 @@ class Extractor extends MonthExtractor {
     // Espero a que cargue el contenido del dashboard
     await new Promise((resolve) => setTimeout(resolve, 4000));
 
-    // Selecciono año
-    await this.changeSlicer(page, 0, `${dateId.year}`);
-
-    // Selecciono mes
-    await this.changeSlicer(page, 1, MONTH_MAP[dateId.month]);
+    // Selecciono año y mes
+    const found =
+      (await this.changeSlicer(page, 0, `${dateId.year}`)) &&
+      (await this.changeSlicer(page, 1, MONTH_MAP[dateId.month]));
 
     // Extraigo los valores de la tabla
-    const tableValues = await this.getTableValues(page);
+    const tableValues = found ? await this.getTableValues(page) : null;
 
     // Cierro el navegador
     await browser.close();
@@ -311,11 +315,29 @@ class Extractor extends MonthExtractor {
     };
   };
 
+  /**
+   * Abre una pestaña con locale es-CL, que es el formato
+   * de números de los archivos descargados ("2.269", "20,1 %")
+   */
+  private newPage = async (browser: Browser): Promise<Page> => {
+    const page = await browser.newPage();
+    const session = await page.target().createCDPSession();
+    await session.send('Emulation.setLocaleOverride', { locale: 'es-CL' });
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'language', { get: () => 'es-CL' });
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['es-CL', 'es'],
+      });
+    });
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'es-CL,es;q=0.9' });
+    return page;
+  };
+
   private changeSlicer = async (
     page: Page,
     slicerIndex: number,
     itemText: string
-  ) => {
+  ): Promise<boolean> => {
     // Le doy click al dropdown
     await page.evaluate((slicerIndex: number) => {
       // Encuentra el dropdown
@@ -330,7 +352,7 @@ class Extractor extends MonthExtractor {
     await new Promise((resolve) => setTimeout(resolve, 3000));
 
     // Doy click al item deseado
-    await page.evaluate(
+    const found = await page.evaluate(
       (slicerIndex: number, itemText: string) => {
         // Encuentra el dropdown content
         const dropdownContents = document.querySelectorAll(
@@ -344,15 +366,25 @@ class Extractor extends MonthExtractor {
           (item) => item.textContent.trim() === itemText
         );
 
+        if (!item) {
+          return false;
+        }
+
         // Le doy click al item
         (item as HTMLElement).click();
+        return true;
       },
       slicerIndex,
       itemText
     );
 
+    if (!found) {
+      return false;
+    }
+
     // Espero a que cargue el contenido del dashboard
     await new Promise((resolve) => setTimeout(resolve, 4000));
+    return true;
   };
 
   private getTableValues = async (page: Page): Promise<string[][]> => {
@@ -370,13 +402,14 @@ class Extractor extends MonthExtractor {
       return values;
     });
 
-    // Divido los valores en 20 sub-arrays
+    // Divido los valores en filas de 12 columnas
     const cellValues: string[][] = [];
     for (let i = 0; i < cellTexts.length; i += 12) {
       cellValues.push(cellTexts.slice(i, i + 12));
     }
 
-    return cellValues;
+    // Me quedo con el top 20
+    return cellValues.filter((row) => parseInt(row[0], 10) <= 20);
   };
 }
 
